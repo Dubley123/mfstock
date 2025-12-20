@@ -41,6 +41,20 @@ class FeatureProcessor:
         self.outlier_handler = outlier_handler
         self.norm_handler = norm_handler
 
+    @staticmethod
+    def get_standardized_config(config: dict) -> dict:
+        """标准化配置字典，用于生成唯一ID"""
+        if not config:
+            return {}
+        
+        std_config = {
+            "nan_handler": str(config.get("nan_handler", "")).lower(),
+            "outlier_handler": str(config.get("outlier_handler", "")).lower(),
+            "norm_handler": str(config.get("norm_handler", "")).lower(),
+        }
+        
+        return std_config
+
     def fit_transform(self, df: pd.DataFrame, feature_cols: List[str]) -> pd.DataFrame:
         """
         按指定顺序对特征列进行预处理（按 TradingDate 横截面处理）。

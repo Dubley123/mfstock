@@ -42,17 +42,11 @@ uv sync --no-dev
 ## 4. 配置文件说明
 项目主要通过 `configs/` 下的 YAML 文件进行配置：
 
+**==请将 `configs/` 目录下的 `xxx_config.yaml.example` 复制为 `xxx_config.yaml` 文件，并进行配置参数调整==**
+
 - **`project_config.yaml`**: 设置项目根目录 `project_root`。
 - **`training_config.yaml`**: 模型训练的配置文件
-    - `paths`: 指定数据输入和结果输出的相对路径。
-    - `dataset`: 配置特征和目标文件路径、时间/股票列名、预处理方式（中位数填充、MAD 去极值、Z-Score 归一化）。
-    - `dataloader`: 配置 Batch Size 和数据加载线程数。
-    - `rolling_window`: 定义滚动窗口逻辑，包括各频率的 Lookback 长度、训练/验证/测试集窗口长度及调仓频率。
-    - `model`: 配置 Transformer 的超参数（层数、头数、维度）及多频率融合方式。
-    - `training`: 配置优化器参数、Epochs、早停（Early Stopping）策略。
 - **`backtest_config.yaml`**: 回测的配置文件
-    - `paths_config`: 配置回测所需的行情数据（复权价、市值、股票池、停牌限价）及待回测的因子路径。
-    - `backtest_config`: 配置回测区间、中性化方式及回测频率。
 
 ## 5. 项目使用方式
 项目通过 `pyproject.toml` 定义了快捷命令，使用 `uv run` 即可调用：

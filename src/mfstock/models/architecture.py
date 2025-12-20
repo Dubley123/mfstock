@@ -6,7 +6,7 @@
 
 import torch
 import torch.nn as nn
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 import math
 
 
@@ -38,29 +38,35 @@ class FrequencyTower(nn.Module):
     """
     单频率塔
     
-    对单一频率的时序数据进行编码
+    对单一频率的时序数据进行编码，并支持重构（AutoEncoder）
     """
     
     def __init__(self, 
                  input_dim: int,
+                 seq_len: int,
                  d_model: int = 128,
                  nhead: int = 4,
                  num_layers: int = 2,
                  dim_feedforward: int = 256,
-                 dropout: float = 0.1):
+                 dropout: float = 0.1,
+                 use_ae: bool = True):
         """
         Args:
             input_dim: 输入特征维度
+            seq_len: 序列长度
             d_model: Transformer隐藏维度
             nhead: 注意力头数
             num_layers: Transformer层数
             dim_feedforward: FFN维度
             dropout: Dropout率
+            use_ae: 是否使用自编码器重构任务
         """
         super().__init__()
         
         self.input_dim = input_dim
+        self.seq_len = seq_len
         self.d_model = d_model
+        self.use_ae = use_ae
         
         # 输入投影
         self.input_proj = nn.Linear(input_dim, d_model)
@@ -83,6 +89,16 @@ class FrequencyTower(nn.Module):
         
         # Layer Norm
         self.layer_norm = nn.LayerNorm(d_model)
+
+        # Decoder (AutoEncoder)
+        if self.use_ae:
+            decoder_hidden = d_model * 2
+            self.decoder = nn.Sequential(
+                nn.Linear(d_model, decoder_hidden),
+                nn.ReLU(),
+                nn.Linear(decoder_hidden, seq_len * input_dim),
+                nn.Unflatten(1, (seq_len, input_dim))
+            )
     
     def forward(self, x):
         """
@@ -90,31 +106,38 @@ class FrequencyTower(nn.Module):
             x: (batch, seq_len, input_dim)
         
         Returns:
-            (batch, d_model) - 取最后一个时间步
+            encoded: (batch, d_model)
+            reconstructed: (batch, seq_len, input_dim) if use_ae else None
         """
+        # 1. Encoding
         # 投影到d_model维度
-        x = self.input_proj(x)  # (batch, seq_len, d_model)
+        h = self.input_proj(x)  # (batch, seq_len, d_model)
         
         # 位置编码
-        x = self.pos_encoder(x)
+        h = self.pos_encoder(h)
         
         # Transformer编码
-        x = self.transformer_encoder(x)  # (batch, seq_len, d_model)
+        h = self.transformer_encoder(h)  # (batch, seq_len, d_model)
         
-        # 取最后一个时间步
-        x = x[:, -1, :]  # (batch, d_model)
+        # 取最后一个时间步作为编码向量
+        encoded = h[:, -1, :]  # (batch, d_model)
         
         # Layer Norm
-        x = self.layer_norm(x)
+        encoded = self.layer_norm(encoded)
+
+        # 2. Decoding (Reconstruction)
+        reconstructed = None
+        if self.use_ae:
+            reconstructed = self.decoder(encoded)
         
-        return x
+        return encoded, reconstructed
 
 
 class MultiTowerTransformer(nn.Module):
     """
     动态多塔 Transformer
     
-    根据传入的频率信息动态构建塔，无硬编码
+    根据传入的频率信息动态构建塔，支持 AutoEncoder 辅助任务
     """
     
     def __init__(self,
@@ -126,7 +149,8 @@ class MultiTowerTransformer(nn.Module):
                  dropout: float = 0.1,
                  fusion_method: str = 'concat',
                  fusion_hidden_dims: List[int] = [256, 128],
-                 freq_configs: Optional[Dict[str, Dict]] = None):
+                 freq_configs: Optional[Dict[str, Dict]] = None,
+                 use_ae: bool = True):
         """
         Args:
             freq_info: 频率信息字典
@@ -142,10 +166,7 @@ class MultiTowerTransformer(nn.Module):
             fusion_method: 融合方法，'concat' 或 'weighted'
             fusion_hidden_dims: 融合MLP的隐藏层维度
             freq_configs: 各频率的特定配置，可覆盖默认值
-                格式: {
-                    'monthly': {'num_layers': 3, 'd_model': 128},
-                    ...
-                }
+            use_ae: 是否启用 AutoEncoder 重构辅助任务
         """
         super().__init__()
         
@@ -154,6 +175,7 @@ class MultiTowerTransformer(nn.Module):
         self.d_model = d_model
         self.fusion_method = fusion_method
         self.freq_configs = freq_configs or {}
+        self.use_ae = use_ae
         
         # 动态构建频率塔
         self.towers = nn.ModuleDict()
@@ -172,11 +194,13 @@ class MultiTowerTransformer(nn.Module):
             
             self.towers[freq_name] = FrequencyTower(
                 input_dim=info['input_dim'],
+                seq_len=info['seq_len'],
                 d_model=f_d_model,
                 nhead=f_nhead,
                 num_layers=f_num_layers,
                 dim_feedforward=f_dim_feedforward,
-                dropout=f_dropout
+                dropout=f_dropout,
+                use_ae=use_ae
             )
             tower_output_dims.append(f_d_model)
         
@@ -208,13 +232,14 @@ class MultiTowerTransformer(nn.Module):
         
         self.fusion_mlp = nn.Sequential(*mlp_layers)
     
-    def forward(self, x_dict: Dict[str, torch.Tensor]) -> torch.Tensor:
+    def forward(self, x_dict: Dict[str, torch.Tensor]) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
         """
         Args:
             x_dict: {freq_name: tensor of shape (batch, seq_len, input_dim)}
         
         Returns:
             predictions: (batch, 1)
+            reconstructions_dict: {freq_name: reconstructed_tensor}
         """
         # 验证输入
         if set(x_dict.keys()) != set(self.freq_names):
@@ -225,10 +250,13 @@ class MultiTowerTransformer(nn.Module):
         
         # 每个塔独立编码
         tower_outputs = []
+        reconstructions_dict = {}
         for freq_name in self.freq_names:  # 使用排序后的顺序
             x = x_dict[freq_name]
-            tower_out = self.towers[freq_name](x)  # (batch, d_model)
+            tower_out, reconstructed = self.towers[freq_name](x)  # (batch, d_model), (batch, seq_len, input_dim)
             tower_outputs.append(tower_out)
+            if reconstructed is not None:
+                reconstructions_dict[freq_name] = reconstructed
         
         # 融合
         if self.fusion_method == 'concat':
@@ -242,7 +270,7 @@ class MultiTowerTransformer(nn.Module):
         # MLP预测
         predictions = self.fusion_mlp(fused)  # (batch, 1)
         
-        return predictions
+        return predictions, reconstructions_dict
     
     def get_num_parameters(self) -> int:
         """返回模型参数数量"""
@@ -259,6 +287,28 @@ class MultiTowerTransformer(nn.Module):
             f"  Parameters: {n_params:,}\n"
             f")"
         )
+
+    @staticmethod
+    def get_standardized_config(config: dict) -> dict:
+        """标准化配置字典，用于生成唯一ID"""
+        if not config:
+            return {}
+            
+        # 提取并标准化 global 配置
+        raw_global = config.get("global", {})
+        std_global = {
+            "dropout": float(raw_global.get("dropout", 0.1)),
+            "fusion_method": str(raw_global.get("fusion_method", "concat")).lower(),
+            "use_ae": bool(raw_global.get("use_ae", True)),
+            "ae_alpha": float(raw_global.get("ae_alpha", 0.1))
+        }
+        
+        # 提取 freq_specific 配置
+        std_config = {
+            "global": std_global,
+            "freq_specific": config.get("freq_specific", {})
+        }
+        return std_config
 
 
 def create_model(freq_info: Dict[str, Dict], **kwargs) -> MultiTowerTransformer:

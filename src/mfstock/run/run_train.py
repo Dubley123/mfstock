@@ -99,37 +99,27 @@ def main(config_path: str = None):
     # ==================== 2. 配置 ====================
     lookback_windows = config['rolling_window']['lookback_windows']
     
-    # 滚动窗口配置
-    rolling_config = {
-        'frequencies': list(feature_datasets.keys()),
-        'lookback_windows': lookback_windows,
-        'train_window': config['rolling_window']['train_window'],
-        'val_window': config['rolling_window']['val_window'],
-        'test_window': config['rolling_window']['test_window'],
-        'test_start_time': config['rolling_window']['test_start_time'],
-        'rebalance_freq': config['rolling_window']['rebalance_freq'],
-    }
-    
     # ==================== 3. 初始化Saver ====================
     print("\n[2] Initializing ModelSaver...")
-    saver = ModelSaver(base_dir=config['paths']['output_dir'], config=rolling_config)
-    print(f"Config ID: {saver.get_config_id()}")
+    saver = ModelSaver(base_dir=config['paths']['output_dir'], config=config)
+    print(f"Config ID: {saver.config_id}")
     print(f"Experiment directory: {saver.output_dir}")
     
     # ==================== 4. 创建滚动窗口 ====================
     print("\n[3] Creating RollingWindow...")
+    rw_cfg = config['rolling_window']
     rolling_window = RollingWindow(
         feature_datasets=feature_datasets,
         target_dataset=target_dataset,
         lookback_windows=lookback_windows,
-        train_window=config['rolling_window']['train_window'],
-        val_window=config['rolling_window']['val_window'],
-        test_window=config['rolling_window']['test_window'],
-        test_start_time=config['rolling_window']['test_start_time'],
-        rebalance_freq=config['rolling_window']['rebalance_freq'],
-        batch_size=config['dataloader']['batch_size'],
-        shuffle_train=config['dataloader']['shuffle_train'],
-        num_workers=config['dataloader'].get('num_workers', 0)
+        train_window=rw_cfg['train_window'],
+        val_window=rw_cfg['val_window'],
+        test_window=rw_cfg['test_window'],
+        test_start_time=rw_cfg['test_start_time'],
+        rebalance_freq=rw_cfg['rebalance_freq'],
+        batch_size=rw_cfg['batch_size'],
+        shuffle_train=rw_cfg['shuffle_train'],
+        num_workers=rw_cfg.get('num_workers', 0)
     )
     
     # ==================== 5. 构建freq_info ====================
@@ -164,19 +154,18 @@ def main(config_path: str = None):
             # 加载模型
             model = create_model(
                 freq_info=freq_info,
-                d_model=config['model']['d_model'],
-                nhead=config['model']['nhead'],
-                num_layers=config['model']['num_layers'],
-                dropout=config['model'].get('dropout', 0.1),
-                fusion_method=config['model']['fusion_method'],
-                freq_configs=config['model'].get('frequencies', {})
+                dropout=config['model']['global'].get('dropout', 0.1),
+                fusion_method=config['model']['global']['fusion_method'],
+                use_ae=config['model']['global'].get('use_ae', False),
+                freq_configs=config['model'].get('freq_specific', {})
             )
             
             engine = create_engine(
                 model=model,
                 learning_rate=config['training']['learning_rate'],
                 patience=config['training']['patience'],
-                verbose=config['training']['verbose']
+                verbose=config['training']['verbose'],
+                ae_alpha=config['model']['global'].get('ae_alpha', 0.1)
             )
             
             saver.load_model(model, window_idx, device=engine.device)
@@ -208,12 +197,10 @@ def main(config_path: str = None):
             # 创建新模型
             model = create_model(
                 freq_info=freq_info,
-                d_model=config['model']['d_model'],
-                nhead=config['model']['nhead'],
-                num_layers=config['model']['num_layers'],
-                dropout=config['model'].get('dropout', 0.1),
-                fusion_method=config['model']['fusion_method'],
-                freq_configs=config['model'].get('frequencies', {})
+                dropout=config['model']['global'].get('dropout', 0.1),
+                fusion_method=config['model']['global']['fusion_method'],
+                use_ae=config['model']['global'].get('use_ae', False),
+                freq_configs=config['model'].get('freq_specific', {})
             )
             
             print(f"\n{model}")
@@ -223,7 +210,8 @@ def main(config_path: str = None):
                 model=model,
                 learning_rate=config['training']['learning_rate'],
                 patience=config['training']['patience'],
-                verbose=config['training']['verbose']
+                verbose=config['training']['verbose'],
+                ae_alpha=config['model']['global'].get('ae_alpha', 0.1)
             )
             
             # 训练

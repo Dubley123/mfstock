@@ -22,45 +22,44 @@ dataset:
   
   # 特征预处理器配置
   processor:
-    nan_handler: "median"  # NaN处理方式
-    outlier_handler: "mad"  # 异常值处理
-    norm_handler: "zscore"  # 归一化方式
+    nan_handler: "median"     # NaN处理方式
+    outlier_handler: "mad"    # 异常值处理
+    norm_handler: "zscore"    # 归一化方式
 
-# ==================== (三) DataLoader配置 ====================
-dataloader:
-  batch_size: 1024
-  shuffle_train: true  # 训练集是否打乱
-  num_workers: 0  # 数据加载线程数（Windows建议设为0）
-
-# ==================== (四) 滚动窗口配置 ====================
+# ==================== (三) 滚动窗口配置 ====================
 rolling_window:
   # 各频率的 lookback 窗口长度
   lookback_windows:
-    monthly: "12m"  # 12个月
-    weekly: "8w"  # 8周
+    monthly: "12m"      # 12个月
+    weekly: "8w"        # 8周
     
   train_window: "5y"    # 训练集窗口长度
   val_window: "2y"      # 验证集窗口长度
   test_window: "1y"     # 测试集窗口长度
-  test_start_time: "2018-01-01"  # 测试集起始时间
+  test_start_time: "2020"  # 测试集起始时间
   rebalance_freq: "1m"  # 调仓频率
 
-# ==================== (五) 模型配置 ====================
+  batch_size: 1024
+  shuffle_train: true   # 训练集是否打乱
+  num_workers: 0        # 数据加载线程数（Windows建议设为0）
+
+# ==================== (四) 模型配置 ====================
 model:
-  # 全局默认参数
-  d_model: 128    # Embedding维度
-  nhead: 4        # 注意力头数
-  num_layers: 2   # Transformer层数
-  dropout: 0.1
-  fusion_method: "concat"  # 各频率向量拼接方法: 'concat'/'weighted'
+  global:
+    dropout: 0.1
+    fusion_method: "concat"  # 各频率向量拼接方法: 'concat'/'weighted'
+    use_ae: true             # 是否启用 AutoEncoder 重构辅助任务
+    ae_alpha: 0.1            # 重构损失的权重系数
   
-  # 各频率模型的特定配置（可选，覆盖全局默认值）
-  frequencies:
+  # 各频率模型的特定配置
+  freq_specific:
     monthly:
-      d_model: 128
-      num_layers: 2
+      d_model: 128    # Embedding维度
+      nhead: 4        # 注意力头数
+      num_layers: 2   # Transformer层数
     weekly:
       d_model: 128
+      nhead: 4
       num_layers: 2
 
 # ==================== (六) 训练配置 ====================

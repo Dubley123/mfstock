@@ -28,7 +28,8 @@ class Engine:
                  optimizer: torch.optim.Optimizer,
                  device: str = 'cuda' if torch.cuda.is_available() else 'cpu',
                  patience: int = 10,
-                 verbose: bool = True):
+                 verbose: bool = True,
+                 ae_alpha: float = 0.1):
         """
         Args:
             model: 模型
@@ -37,15 +38,18 @@ class Engine:
             device: 设备
             patience: Early Stopping耐心值
             verbose: 是否打印详细信息
+            ae_alpha: 重构损失权重
         """
         self.model = model.to(device)
         self.criterion = criterion
+        self.ae_criterion = nn.MSELoss()
         self.optimizer = optimizer
         self.device = device
         self.patience = patience
         self.verbose = verbose
+        self.ae_alpha = ae_alpha
     
-    def train_one_epoch(self, train_loader: DataLoader) -> float:
+    def train_one_epoch(self, train_loader: DataLoader) -> Tuple[float, float, float]:
         """
         训练一个epoch
         
@@ -53,10 +57,12 @@ class Engine:
             train_loader: 训练数据加载器
         
         Returns:
-            平均损失
+            (avg_total_loss, avg_pred_loss, avg_ae_loss)
         """
         self.model.train()
         total_loss = 0.0
+        total_pred_loss = 0.0
+        total_ae_loss = 0.0
         n_batches = 0
         
         pbar = tqdm(train_loader, desc="Training", disable=not self.verbose)
@@ -67,22 +73,44 @@ class Engine:
             
             # 前向传播
             self.optimizer.zero_grad()
-            predictions = self.model(X_batch)
-            loss = self.criterion(predictions, y_batch)
+            predictions, reconstructions_dict = self.model(X_batch)
+            
+            # 1. 预测损失
+            pred_loss = self.criterion(predictions, y_batch)
+            
+            # 2. 重构损失 (AutoEncoder)
+            ae_loss = torch.tensor(0.0, device=self.device)
+            if reconstructions_dict:
+                for freq_name, reconstructed in reconstructions_dict.items():
+                    # 原始输入
+                    original = X_batch[freq_name]
+                    ae_loss += self.ae_criterion(reconstructed, original)
+                ae_loss = ae_loss / len(reconstructions_dict)
+            
+            # 3. 合并损失
+            loss = pred_loss + self.ae_alpha * ae_loss
             
             # 反向传播
             loss.backward()
             self.optimizer.step()
             
             total_loss += loss.item()
+            total_pred_loss += pred_loss.item()
+            total_ae_loss += ae_loss.item()
             n_batches += 1
             
-            pbar.set_postfix({'loss': f'{loss.item():.6f}'})
+            pbar.set_postfix({
+                'loss': f'{loss.item():.4f}',
+                'pred': f'{pred_loss.item():.4f}',
+                'ae': f'{ae_loss.item():.4f}'
+            })
         
         avg_loss = total_loss / n_batches if n_batches > 0 else 0.0
-        return avg_loss
+        avg_pred_loss = total_pred_loss / n_batches if n_batches > 0 else 0.0
+        avg_ae_loss = total_ae_loss / n_batches if n_batches > 0 else 0.0
+        return avg_loss, avg_pred_loss, avg_ae_loss
     
-    def validate(self, val_loader: DataLoader) -> Tuple[float, float]:
+    def validate(self, val_loader: DataLoader) -> Tuple[float, float, float, float]:
         """
         验证集评估
         
@@ -90,10 +118,12 @@ class Engine:
             val_loader: 验证数据加载器
         
         Returns:
-            (avg_loss, ic)
+            (avg_total_loss, avg_pred_loss, avg_ae_loss, ic)
         """
         self.model.eval()
         total_loss = 0.0
+        total_pred_loss = 0.0
+        total_ae_loss = 0.0
         n_batches = 0
         
         all_preds = []
@@ -106,10 +136,25 @@ class Engine:
                 y_batch = y_batch.to(self.device)
                 
                 # 前向传播
-                predictions = self.model(X_batch)
-                loss = self.criterion(predictions, y_batch)
+                predictions, reconstructions_dict = self.model(X_batch)
+                
+                # 1. 预测损失
+                pred_loss = self.criterion(predictions, y_batch)
+                
+                # 2. 重构损失
+                ae_loss = torch.tensor(0.0, device=self.device)
+                if reconstructions_dict:
+                    for freq_name, reconstructed in reconstructions_dict.items():
+                        original = X_batch[freq_name]
+                        ae_loss += self.ae_criterion(reconstructed, original)
+                    ae_loss = ae_loss / len(reconstructions_dict)
+                
+                # 3. 合并损失
+                loss = pred_loss + self.ae_alpha * ae_loss
                 
                 total_loss += loss.item()
+                total_pred_loss += pred_loss.item()
+                total_ae_loss += ae_loss.item()
                 n_batches += 1
                 
                 # 收集预测和真实值
@@ -117,11 +162,13 @@ class Engine:
                 all_targets.extend(y_batch.cpu().numpy().flatten())
         
         avg_loss = total_loss / n_batches if n_batches > 0 else 0.0
+        avg_pred_loss = total_pred_loss / n_batches if n_batches > 0 else 0.0
+        avg_ae_loss = total_ae_loss / n_batches if n_batches > 0 else 0.0
         
         # 计算IC (Information Coefficient)
         ic = np.corrcoef(all_preds, all_targets)[0, 1] if len(all_preds) > 0 else 0.0
         
-        return avg_loss, ic
+        return avg_loss, avg_pred_loss, avg_ae_loss, ic
     
     def train_one_window(self,
                         train_loader: DataLoader,
@@ -146,7 +193,11 @@ class Engine:
         
         history = {
             'train_loss': [],
+            'train_pred_loss': [],
+            'train_ae_loss': [],
             'val_loss': [],
+            'val_pred_loss': [],
+            'val_ae_loss': [],
             'val_ic': [],
             'best_epoch': 0
         }
@@ -158,18 +209,23 @@ class Engine:
                 print(f"\n{window_str} - Epoch {epoch + 1}/{epochs}")
             
             # 训练
-            train_loss = self.train_one_epoch(train_loader)
+            train_loss, train_pred, train_ae = self.train_one_epoch(train_loader)
             
             # 验证
-            val_loss, val_ic = self.validate(val_loader)
+            val_loss, val_pred, val_ae, val_ic = self.validate(val_loader)
             
             # 记录
             history['train_loss'].append(train_loss)
+            history['train_pred_loss'].append(train_pred)
+            history['train_ae_loss'].append(train_ae)
             history['val_loss'].append(val_loss)
+            history['val_pred_loss'].append(val_pred)
+            history['val_ae_loss'].append(val_ae)
             history['val_ic'].append(val_ic)
             
             if self.verbose:
-                print(f"Train Loss: {train_loss:.6f}, Val Loss: {val_loss:.6f}, Val IC: {val_ic:.4f}")
+                print(f"Train Loss: {train_loss:.6f} (Pred: {train_pred:.6f}, AE: {train_ae:.6f})")
+                print(f"Val Loss: {val_loss:.6f} (Pred: {val_pred:.6f}, AE: {val_ae:.6f}), Val IC: {val_ic:.4f}")
             
             # Early Stopping（以val_loss为准）
             if val_loss < best_val_loss:
@@ -213,7 +269,13 @@ class Engine:
                 X_batch = {k: v.to(self.device) for k, v in X_batch.items()}
                 
                 # 前向传播
-                predictions = self.model(X_batch)
+                outputs = self.model(X_batch)
+                
+                # 处理多输出（AE任务）
+                if isinstance(outputs, tuple):
+                    predictions = outputs[0]
+                else:
+                    predictions = outputs
                 
                 # 提取结果
                 preds = predictions.cpu().numpy().flatten()
@@ -233,7 +295,8 @@ def create_engine(model: nn.Module,
                  learning_rate: float = 1e-4,
                  weight_decay: float = 1e-5,
                  patience: int = 10,
-                 verbose: bool = True) -> Engine:
+                 verbose: bool = True,
+                 ae_alpha: float = 0.1) -> Engine:
     """
     创建训练引擎
     
@@ -243,6 +306,7 @@ def create_engine(model: nn.Module,
         weight_decay: 权重衰减
         patience: Early Stopping耐心值
         verbose: 是否打印详细信息
+        ae_alpha: AutoEncoder 损失权重
     
     Returns:
         Engine实例
@@ -261,5 +325,6 @@ def create_engine(model: nn.Module,
         optimizer=optimizer,
         device=device,
         patience=patience,
-        verbose=verbose
+        verbose=verbose,
+        ae_alpha=ae_alpha
     )

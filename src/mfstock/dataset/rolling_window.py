@@ -101,6 +101,35 @@ class RollingWindow:
         print(f"  Lookback windows: {lookback_windows}")
         print(f"  Total windows: {len(self.windows)}")
 
+    @staticmethod
+    def get_standardized_config(config: dict) -> dict:
+        """标准化配置字典，用于生成唯一ID"""
+        if not config:
+            return {}
+            
+        # 剔除 batch_size/shuffle_train/num_workers
+        # 标准化 test_start_time 为 YYYY-MM-DD
+        test_start = config.get("test_start_time", "")
+        if test_start:
+            try:
+                # 尝试解析并格式化为 YYYY-MM-DD
+                test_start_std = pd.Timestamp(test_start).strftime("%Y-%m-%d")
+            except:
+                test_start_std = str(test_start)
+        else:
+            test_start_std = ""
+
+        std_config = {
+            "lookback_windows": config.get("lookback_windows", {}),
+            "train_window": str(config.get("train_window", "")),
+            "val_window": str(config.get("val_window", "")),
+            "test_window": str(config.get("test_window", "")),
+            "test_start_time": test_start_std,
+            "rebalance_freq": str(config.get("rebalance_freq", "")),
+        }
+        
+        return std_config
+
     def _precompute_windows(self) -> list:
         """预计算所有有效的滚动窗口"""
         windows = []

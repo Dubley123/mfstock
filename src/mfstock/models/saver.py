@@ -18,37 +18,34 @@ def generate_config_hash(config: Dict[str, Any]) -> Tuple[Dict, str]:
     根据关键配置参数生成唯一的MD5哈希值
     
     Args:
-        config: 配置字典，应包含：
-            - frequencies: 使用的频率列表（已排序）
-            - lookback_windows: 回看窗口配置
-            - train_window: 训练窗口
-            - val_window: 验证窗口
-            - test_window: 测试窗口
-            - rebalance_freq: 调仓频率
-            - test_start_time: 测试开始时间
-            其他影响数据加载的关键参数
+        config: 完整配置字典
     
     Returns:
-        (config_dict, config_id)
+        (std_config, config_id)
     """
-    # 提取关键配置
-    key_config = {
-        'frequencies': sorted(config.get('frequencies', [])),
-        'lookback_windows': config.get('lookback_windows', {}),
-        'train_window': str(config.get('train_window', '')),
-        'val_window': str(config.get('val_window', '')),
-        'test_window': str(config.get('test_window', '')),
-        'rebalance_freq': str(config.get('rebalance_freq', '')),
-        'test_start_time': str(config.get('test_start_time', '')),
+    from mfstock.dataset.processor import FeatureProcessor
+    from mfstock.dataset.rolling_window import RollingWindow
+    from mfstock.models.architecture import MultiTowerTransformer
+
+    # 分别标准化各个部分的配置
+    std_processor = FeatureProcessor.get_standardized_config(config.get('dataset', {}).get('processor', {}))
+    std_rolling = RollingWindow.get_standardized_config(config.get('rolling_window', {}))
+    std_model = MultiTowerTransformer.get_standardized_config(config.get('model', {}))
+    
+    # 合并标准化后的配置
+    std_config = {
+        'processor': std_processor,
+        'rolling_window': std_rolling,
+        'model': std_model,
     }
     
     # 序列化为JSON字符串（确保顺序一致）
-    config_str = json.dumps(key_config, sort_keys=True)
+    config_str = json.dumps(std_config, sort_keys=True)
     
     # 生成MD5哈希
     config_id = hashlib.md5(config_str.encode()).hexdigest()[:12]
     
-    return key_config, config_id
+    return std_config, config_id
 
 
 class ModelSaver:
@@ -73,14 +70,16 @@ class ModelSaver:
         self.base_dir.mkdir(parents=True, exist_ok=True)
         
         if config is not None:
-            self.config, self.config_id = generate_config_hash(config)
+            self.full_config = config
+            self.key_config, self.config_id = generate_config_hash(config)
             self.output_dir = self.base_dir / self.config_id
             self.output_dir.mkdir(parents=True, exist_ok=True)
             
             # 保存配置文件
             self._save_config()
         else:
-            self.config = None
+            self.full_config = None
+            self.key_config = None
             self.config_id = None
             self.output_dir = None
     
@@ -91,19 +90,20 @@ class ModelSaver:
         Args:
             config: 配置字典
         """
-        self.config, self.config_id = generate_config_hash(config)
+        self.full_config = config
+        self.key_config, self.config_id = generate_config_hash(config)
         self.output_dir = self.base_dir / self.config_id
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self._save_config()
     
     def _save_config(self):
         """保存配置到YAML文件"""
-        if self.config is None:
+        if self.key_config is None:
             return
         
-        config_file = self.output_dir / "config.yaml"
-        with open(config_file, 'w') as f:
-            yaml.dump(self.config, f, default_flow_style=False)
+        config_file = self.output_dir / "exp_config.yaml"
+        with open(config_file, 'w', encoding='utf-8') as f:
+            yaml.dump(self.key_config, f, default_flow_style=False, allow_unicode=True)
         
         print(f"Config saved to {config_file}")
     
