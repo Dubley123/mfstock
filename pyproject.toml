@@ -1,0 +1,61 @@
+[project]
+name = "mfstock"
+version = "0.1.0"
+description = "多频率Transformer股票收益率预测系统 (Multi-Frequency Transformer for Stock Return Forecasting)"
+readme = "README.md"
+requires-python = ">=3.12"
+authors = [
+    { name = "Your Name", email = "your.email@example.com" }
+]
+license = { text = "MIT" }
+keywords = ["deep-learning", "transformer", "stock-forecasting", "time-series", "multi-frequency"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Programming Language :: Python :: 3.12",
+]
+dependencies = [
+    "torch",
+    "torchvision",
+    "torchaudio",
+    "matplotlib>=3.10.8",
+    "numpy>=2.3.5",
+    "pandas>=2.3.3",
+    "pyarrow>=22.0.0",
+    "pyyaml>=6.0.3",
+    "scikit-learn>=1.8.0",
+    "statsmodels>=0.14.0",
+    "python-dateutil>=2.9.0",
+    "tabulate>=0.9.0",
+    "tensorboard>=2.20.0",
+    "tqdm>=4.67.1",
+]
+
+[project.scripts]
+mf-train = "mfstock.run.run_train:main"
+mf-backtest = "mfstock.run.run_backtest:main"
+
+[project.urls]
+Homepage = "https://github.com/Dubley123/mfstock"
+Repository = "https://github.com/Dubley123/mfstock.git"
+
+[tool.uv]
+package = true  # 启用脚本入口点（project.scripts）
+
+# 1. 定义专属索引：只针对特定的包（如 PyTorch）开启
+[[tool.uv.index]]
+name = "pytorch-cu124"
+url = "https://download.pytorch.org/whl/cu124"
+explicit = true  # 极重要：防止 uv 去这个源下载 tqdm 等普通包导致版本冲突
+
+# 2. 绑定包与索引：强制这三个包必须从上面的 pytorch 源下载
+[tool.uv.sources]
+torch = { index = "pytorch-cu124" }
+torchvision = { index = "pytorch-cu124" }
+torchaudio = { index = "pytorch-cu124" }
+
+[dependency-groups]
+dev = [
+    "ipykernel>=6.29.0",
+]

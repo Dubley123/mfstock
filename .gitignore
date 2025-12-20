@@ -1,0 +1,62 @@
+######### --- Python 编译缓存文件 --- #########
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+######### --- 虚拟环境 --- #########
+.venv/
+env/
+venv/
+ENV/
+
+######### --- 敏感信息与配置 --- #########
+.env
+*.yaml 
+# 仅保留 .yaml.example 作为模板
+
+######### --- 依赖与打包 --- #########
+dist/
+build/
+*.egg-info/
+*.egg
+*.spec
+
+######### --- 单元测试与覆盖率 --- #########
+htmlcov/
+.tox/
+.coverage
+.coverage.*
+.pytest_cache/
+.hypothesis/
+nosetests.xml
+coverage.xml
+*.cover
+
+######### --- IDE 配置文件 --- #########
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+######### --- 数据与日志 --- #########
+# (保留文件夹，忽略内容)
+logs/*
+!logs/.gitkeep
+
+data/*
+!data/.gitkeep
+
+output/*
+!output/.gitkeep
+
+backtest_result/*
+!backtest_result/.gitkeep
+
+######### --- 其他临时文件 --- #########
+*.tmp
+*.bak
+.ipynb_checkpoints/
+misc/

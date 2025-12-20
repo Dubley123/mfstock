@@ -1,0 +1,310 @@
+"""
+完整训练流程示例
+"""
+
+import pandas as pd
+import yaml
+from pathlib import Path
+from mfstock.dataset import FeatureDataset, TargetDataset, RollingWindow, FeatureProcessor
+from mfstock.models import create_model, ModelSaver, create_engine
+from mfstock.utils.misc import get_project_root
+
+PROJECT_ROOT = get_project_root()
+
+def load_config(config_path: str = None):
+    """加载配置文件"""
+    if config_path is None:
+        config_path = PROJECT_ROOT / "configs" / "training_config.yaml"
+    else:
+        config_path = Path(config_path)
+    
+    if not config_path.exists():
+        raise FileNotFoundError(f"Config file not found: {config_path}")
+    
+    with open(config_path, 'r', encoding='utf-8') as f:
+        config = yaml.safe_load(f)
+    
+    return config
+
+
+def main(config_path: str = None):
+    """主训练流程"""
+    
+    print("="*80)
+    print("Multi-Frequency Based Transformer Training")
+    print("="*80)
+    
+    # ==================== 0. 加载配置 ====================
+    print("\n[0] Loading configuration...")
+    config = load_config(config_path)
+    print(f"Config loaded from: {config_path or 'configs/training_config.yaml'}")
+    
+    # ==================== 1. 数据加载 ====================
+    print("\n[1] Loading datasets...")
+    data_dir = PROJECT_ROOT / config['paths']['data_dir']
+    time_col = config['dataset'].get('time_col', 'TradingDate')
+    stkcd_col = config['dataset'].get('stkcd_col', 'Stkcd')
+    
+    # 创建特征处理器
+    proc_cfg = config['dataset']['processor']
+    processor = FeatureProcessor(
+        nan_handler=proc_cfg['nan_handler'],
+        outlier_handler=proc_cfg['outlier_handler'],
+        norm_handler=proc_cfg['norm_handler']
+    )
+    
+    # 加载特征数据集
+    feature_datasets = {}
+    feature_files = config['dataset'].get('feature_files', {})
+    
+    for freq, rel_path in feature_files.items():
+        f_path = data_dir / rel_path
+        if f_path.exists():
+            print(f"  Loading {freq} features from {rel_path}...")
+            feature_datasets[freq] = FeatureDataset.from_file(
+                file_path=f_path,
+                frequency=freq,
+                time_col=time_col,
+                stock_col=stkcd_col,
+                processor=processor
+            )
+        else:
+            print(f"  WARNING: Feature file not found: {f_path}")
+    
+    if len(feature_datasets) == 0:
+        print("ERROR: No feature datasets loaded!")
+        return
+    
+    # 加载目标数据集
+    target_files = config['dataset'].get('target_files', {})
+    
+    # 目前逻辑只支持一个主目标数据集，通常取最高频率或月频
+    # 这里我们取第一个可用的目标文件
+    target_dataset = None
+    for freq, rel_path in target_files.items():
+        t_path = data_dir / rel_path
+        if t_path.exists():
+            print(f"  Loading target from {rel_path}...")
+            target_dataset = TargetDataset.from_file(
+                file_path=t_path,
+                time_col=time_col,
+                stock_col=stkcd_col
+            )
+            break # 只取一个
+    
+    if target_dataset is None:
+        print("ERROR: No target datasets loaded!")
+        return
+    
+    # ==================== 2. 配置 ====================
+    lookback_windows = config['rolling_window']['lookback_windows']
+    
+    # 滚动窗口配置
+    rolling_config = {
+        'frequencies': list(feature_datasets.keys()),
+        'lookback_windows': lookback_windows,
+        'train_window': config['rolling_window']['train_window'],
+        'val_window': config['rolling_window']['val_window'],
+        'test_window': config['rolling_window']['test_window'],
+        'test_start_time': config['rolling_window']['test_start_time'],
+        'rebalance_freq': config['rolling_window']['rebalance_freq'],
+    }
+    
+    # ==================== 3. 初始化Saver ====================
+    print("\n[2] Initializing ModelSaver...")
+    saver = ModelSaver(base_dir=config['paths']['output_dir'], config=rolling_config)
+    print(f"Config ID: {saver.get_config_id()}")
+    print(f"Experiment directory: {saver.output_dir}")
+    
+    # ==================== 4. 创建滚动窗口 ====================
+    print("\n[3] Creating RollingWindow...")
+    rolling_window = RollingWindow(
+        feature_datasets=feature_datasets,
+        target_dataset=target_dataset,
+        lookback_windows=lookback_windows,
+        train_window=config['rolling_window']['train_window'],
+        val_window=config['rolling_window']['val_window'],
+        test_window=config['rolling_window']['test_window'],
+        test_start_time=config['rolling_window']['test_start_time'],
+        rebalance_freq=config['rolling_window']['rebalance_freq'],
+        max_iterations=config['rolling_window']['max_iterations'],
+        batch_size=config['dataloader']['batch_size'],
+        shuffle_train=config['dataloader']['shuffle_train'],
+        num_workers=config['dataloader'].get('num_workers', 0)
+    )
+    
+    # ==================== 5. 构建freq_info ====================
+    # 从第一个窗口的数据推断
+    print("\n[4] Building freq_info...")
+    freq_info = {}
+    for freq_name, dataset in feature_datasets.items():
+        from mfstock.dataset.utils import window_to_periods
+        n_periods = window_to_periods(lookback_windows[freq_name], dataset.frequency)
+        freq_info[freq_name] = {
+            'seq_len': n_periods,
+            'input_dim': len(dataset.feature_cols)
+        }
+    
+    print(f"Frequency info: {freq_info}")
+    
+    # ==================== 6. 滚动窗口训练 ====================
+    print("\n[5] Starting rolling window training...")
+    
+    all_predictions = []
+    
+    for window_idx, (train_loader, val_loader, test_loader) in enumerate(rolling_window):
+        # 使用 1-indexed 的窗口 ID
+        display_idx = window_idx + 1
+        
+        # 检查是否已有训练好的模型
+        model_exists = saver.model_exists(window_idx)
+        
+        if model_exists:
+            print(f"\n✓ Found existing model for window {display_idx}")
+            
+            # 加载模型
+            model = create_model(
+                freq_info=freq_info,
+                d_model=config['model']['d_model'],
+                nhead=config['model']['nhead'],
+                num_layers=config['model']['num_layers'],
+                dropout=config['model'].get('dropout', 0.1),
+                fusion_method=config['model']['fusion_method'],
+                freq_configs=config['model'].get('frequencies', {})
+            )
+            
+            engine = create_engine(
+                model=model,
+                learning_rate=config['training']['learning_rate'],
+                patience=config['training']['patience'],
+                verbose=config['training']['verbose']
+            )
+            
+            saver.load_model(model, window_idx, device=engine.device)
+            
+            # 可选：增量训练（追加epochs）
+            additional_epochs = config['training']['additional_epochs']
+            if additional_epochs > 0:
+                print(f"\nFine-tuning for {additional_epochs} additional epochs...")
+                history = engine.train_one_window(
+                    train_loader, val_loader,
+                    epochs=additional_epochs,
+                    window_idx=window_idx
+                )
+                
+                # 保存微调后的模型
+                saver.save_model(
+                    model=engine.model,
+                    window_idx=window_idx,
+                    optimizer=engine.optimizer,
+                    metrics={
+                        'val_loss': history['best_val_loss'],
+                        'val_ic': history['best_val_ic']
+                    }
+                )
+        else:
+            print(f"\n✗ No existing model found for window {display_idx}")
+            print("Training from scratch...")
+            
+            # 创建新模型
+            model = create_model(
+                freq_info=freq_info,
+                d_model=config['model']['d_model'],
+                nhead=config['model']['nhead'],
+                num_layers=config['model']['num_layers'],
+                dropout=config['model'].get('dropout', 0.1),
+                fusion_method=config['model']['fusion_method'],
+                freq_configs=config['model'].get('frequencies', {})
+            )
+            
+            print(f"\n{model}")
+            
+            # 创建引擎
+            engine = create_engine(
+                model=model,
+                learning_rate=config['training']['learning_rate'],
+                patience=config['training']['patience'],
+                verbose=config['training']['verbose']
+            )
+            
+            # 训练
+            history = engine.train_one_window(
+                train_loader, val_loader,
+                epochs=config['training']['epochs'],
+                window_idx=window_idx
+            )
+            
+            # 保存模型
+            saver.save_model(
+                model=engine.model,
+                window_idx=window_idx,
+                optimizer=engine.optimizer,
+                epoch=history['best_epoch'],
+                metrics={
+                    'val_loss': history['best_val_loss'],
+                    'val_ic': history['best_val_ic']
+                }
+            )
+        
+        # 推理
+        print(f"\nPredicting on test set...")
+        predictions_df = engine.predict_one_window(test_loader)
+        predictions_df['window_idx'] = window_idx
+        
+        # 确保time列是pd.Timestamp格式（从int64转换）
+        if predictions_df['time'].dtype == 'int64':
+            predictions_df['time'] = pd.to_datetime(predictions_df['time'])
+        
+        # 实时保存窗口预测（防止中断丢失）
+        saver.save_window_predictions(predictions_df, window_idx)
+        
+        # 汇总到内存
+        all_predictions.append(predictions_df)
+        
+        print(f"\nWindow {display_idx} completed!")
+        print(f"Predictions: {len(predictions_df)} samples")
+    
+    # ==================== 7. 汇总并保存所有预测 ====================
+    print("\n[6] Aggregating and saving all predictions...")
+    
+    # 方案1: 从内存中合并（如果训练完整运行）
+    if len(all_predictions) > 0:
+        final_predictions = pd.concat(all_predictions, ignore_index=True)
+        final_predictions = final_predictions.sort_values(['time', 'stock'])
+        
+        # 确保time列格式正确
+        if final_predictions['time'].dtype == 'int64':
+            final_predictions['time'] = pd.to_datetime(final_predictions['time'])
+        
+        # 保存完整历史因子文件（parquet格式）
+        saver.save_predictions(final_predictions)
+        
+        print(f"\n✓ All predictions saved (from memory)!")
+        print(f"Total samples: {len(final_predictions)}")
+        print(f"Time range: {final_predictions['time'].min()} to {final_predictions['time'].max()}")
+        print(f"Unique stocks: {final_predictions['stock'].nunique()}")
+        print(f"Windows: {final_predictions['window_idx'].nunique()}")
+    else:
+        print("\n⚠ No predictions in memory, attempting to merge from saved files...")
+    
+    # 方案2: 从磁盘合并（用于中断恢复或二次运行）
+    try:
+        merged_predictions = saver.merge_all_predictions()
+        if merged_predictions is not None:
+            print(f"✓ Successfully merged predictions from disk!")
+    except Exception as e:
+        print(f"Warning: Failed to merge predictions from disk: {e}")
+    
+    print("\n" + "="*80)
+    print("Training pipeline completed!")
+    print("="*80)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as e:
+        print(f"\n✗ Pipeline failed with error:")
+        print(f"  {type(e).__name__}: {e}")
+        import traceback
+        traceback.print_exc()
