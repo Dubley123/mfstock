@@ -148,35 +148,35 @@ def main(config_path: str = None):
         # 检查是否已有训练好的模型
         model_exists = saver.model_exists(window_idx)
         
+        # 创建模型实例
+        model = create_model(
+            freq_info=freq_info,
+            dropout=config['model']['global'].get('dropout', 0.1),
+            fusion_method=config['model']['global']['fusion_method'],
+            use_ae=config['model']['global'].get('use_ae', False),
+            freq_configs=config['model'].get('freq_specific', {})
+        )
+        
+        # 创建引擎
+        engine = create_engine(
+            model=model,
+            learning_rate=config['training']['learning_rate'],
+            patience=config['training']['patience'],
+            verbose=config['training']['verbose'],
+            ae_alpha=config['model']['global'].get('ae_alpha', 0.1)
+        )
+        
         if model_exists:
             print(f"\n✓ Found existing model for window {display_idx}")
-            
-            # 加载模型
-            model = create_model(
-                freq_info=freq_info,
-                dropout=config['model']['global'].get('dropout', 0.1),
-                fusion_method=config['model']['global']['fusion_method'],
-                use_ae=config['model']['global'].get('use_ae', False),
-                freq_configs=config['model'].get('freq_specific', {})
-            )
-            
-            engine = create_engine(
-                model=model,
-                learning_rate=config['training']['learning_rate'],
-                patience=config['training']['patience'],
-                verbose=config['training']['verbose'],
-                ae_alpha=config['model']['global'].get('ae_alpha', 0.1)
-            )
-            
             saver.load_model(model, window_idx, device=engine.device)
             
-            # 可选：增量训练（追加epochs）
-            additional_epochs = config['training']['additional_epochs']
-            if additional_epochs > 0:
-                print(f"\nFine-tuning for {additional_epochs} additional epochs...")
+            # 后期追加训练 (Refine)
+            refine_epochs = config['training'].get('refine_epochs', 0)
+            if refine_epochs > 0:
+                print(f"\nRefining model for {refine_epochs} additional epochs...")
                 history = engine.train_one_window(
                     train_loader, val_loader,
-                    epochs=additional_epochs,
+                    epochs=refine_epochs,
                     window_idx=window_idx
                 )
                 
@@ -192,32 +192,28 @@ def main(config_path: str = None):
                 )
         else:
             print(f"\n✗ No existing model found for window {display_idx}")
-            print("Training from scratch...")
             
-            # 创建新模型
-            model = create_model(
-                freq_info=freq_info,
-                dropout=config['model']['global'].get('dropout', 0.1),
-                fusion_method=config['model']['global']['fusion_method'],
-                use_ae=config['model']['global'].get('use_ae', False),
-                freq_configs=config['model'].get('freq_specific', {})
-            )
+            # 增量训练逻辑
+            if window_idx > 0:
+                # 尝试加载上一个窗口的模型
+                prev_window_idx = window_idx - 1
+                if saver.model_exists(prev_window_idx):
+                    print(f"  Inheriting weights from window {prev_window_idx + 1}...")
+                    saver.load_model(model, prev_window_idx, device=engine.device)
+                    train_epochs = config['training'].get('rolling_epochs', 5)
+                    print(f"  Incremental training for {train_epochs} epochs...")
+                else:
+                    print(f"  WARNING: Previous window model not found. Training from scratch.")
+                    train_epochs = config['training'].get('base_epochs', 50)
+            else:
+                # 第一个窗口从头训练
+                print(f"  Base window training from scratch...")
+                train_epochs = config['training'].get('base_epochs', 50)
             
-            print(f"\n{model}")
-            
-            # 创建引擎
-            engine = create_engine(
-                model=model,
-                learning_rate=config['training']['learning_rate'],
-                patience=config['training']['patience'],
-                verbose=config['training']['verbose'],
-                ae_alpha=config['model']['global'].get('ae_alpha', 0.1)
-            )
-            
-            # 训练
+            # 执行训练
             history = engine.train_one_window(
                 train_loader, val_loader,
-                epochs=config['training']['epochs'],
+                epochs=train_epochs,
                 window_idx=window_idx
             )
             

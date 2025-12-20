@@ -69,8 +69,9 @@ training:
   weight_decay: 0.01
   
   # 训练轮数
-  epochs: 50            # 若尚未保存模型文件，表示每个窗口模型的训练轮数
-  additional_epochs: 0  # 若已保存模型，表示在已有模型基础上追加训练的轮数
+  base_epochs: 50       # 第一个窗口（Base Window）从随机初始化开始的轮数
+  rolling_epochs: 5     # 滚动过程中，加载上一期权重后的增量更新轮数
+  refine_epochs: 0      # 针对所有已经训练好的模型，统一进行的后期性能强化轮数
   
   # 早停配置
   patience: 10          # 早停耐心值
