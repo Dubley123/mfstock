@@ -127,7 +127,6 @@ def main(config_path: str = None):
         test_window=config['rolling_window']['test_window'],
         test_start_time=config['rolling_window']['test_start_time'],
         rebalance_freq=config['rolling_window']['rebalance_freq'],
-        max_iterations=config['rolling_window']['max_iterations'],
         batch_size=config['dataloader']['batch_size'],
         shuffle_train=config['dataloader']['shuffle_train'],
         num_workers=config['dataloader'].get('num_workers', 0)
