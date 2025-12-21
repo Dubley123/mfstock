@@ -39,6 +39,31 @@ def main(config_path: str = None):
     config = load_config(config_path)
     print(f"Config loaded from: {config_path or 'configs/training_config.yaml'}")
     
+    # 过滤频率
+    selected_freqs = config.get('selected_freqs', None)
+    if selected_freqs:
+        print(f"Filtering frequencies: {selected_freqs}")
+        # 过滤 feature_files
+        if 'feature_files' in config['dataset']:
+            config['dataset']['feature_files'] = {
+                k: v for k, v in config['dataset']['feature_files'].items() if k in selected_freqs
+            }
+        # 过滤 target_files
+        if 'target_files' in config['dataset']:
+            config['dataset']['target_files'] = {
+                k: v for k, v in config['dataset']['target_files'].items() if k in selected_freqs
+            }
+        # 过滤 lookback_windows
+        if 'lookback_windows' in config['rolling_window']:
+            config['rolling_window']['lookback_windows'] = {
+                k: v for k, v in config['rolling_window']['lookback_windows'].items() if k in selected_freqs
+            }
+        # 过滤 freq_specific
+        if 'model' in config and 'freq_specific' in config['model']:
+            config['model']['freq_specific'] = {
+                k: v for k, v in config['model']['freq_specific'].items() if k in selected_freqs
+            }
+    
     # ==================== 1. 数据加载 ====================
     print("\n[1] Loading datasets...")
     data_dir = PROJECT_ROOT / config['paths']['data_dir']

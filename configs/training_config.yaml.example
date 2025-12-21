@@ -1,3 +1,8 @@
+# ==================== (零) 频率选择 ====================
+selected_freqs:
+  - monthly
+  - weekly
+
 # ==================== (一) 数据路径配置 ====================
 # (均以 project_root 的相对路径表示)
 paths:
@@ -24,7 +29,7 @@ dataset:
   processor:
     nan_handler: "median"     # NaN处理方式
     outlier_handler: "mad"    # 异常值处理
-    norm_handler: "zscore"    # 归一化方式
+    norm_handler: "rank"    # 归一化方式
 
 # ==================== (三) 滚动窗口配置 ====================
 rolling_window:
@@ -69,8 +74,8 @@ training:
   weight_decay: 0.01
   
   # 训练轮数
-  base_epochs: 50       # 第一个窗口（Base Window）从随机初始化开始的轮数
-  rolling_epochs: 5     # 滚动过程中，加载上一期权重后的增量更新轮数
+  base_epochs: 100       # 第一个窗口（Base Window）从随机初始化开始的轮数
+  rolling_epochs: 10     # 滚动过程中，加载上一期权重后的增量更新轮数
   refine_epochs: 0      # 针对所有已经训练好的模型，统一进行的后期性能强化轮数
   
   # 早停配置
