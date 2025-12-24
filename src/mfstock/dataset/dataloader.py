@@ -88,7 +88,12 @@ class MultiFreqDataLoader(Dataset):
             [(time_int64, stock_code), ...] 样本列表
         """
         # 1. 生成理论时间点并转换为 int64
-        time_points = generate_time_points(self.pred_start, self.pred_end, self.rebalance_freq)
+        # 偏移一个频率，确保能覆盖到窗口末尾的数据点
+        # 例如：[2020-01, 2020-04), freq=1m -> 生成 2020-02, 2020-03, 2020-04
+        # 这样 2020-04 就能匹配到 2020-03-31 的数据（即窗口内最后一个月的数据）
+        from mfstock.dataset.utils import parse_window_str
+        shift = parse_window_str(self.rebalance_freq) if isinstance(self.rebalance_freq, str) else self.rebalance_freq
+        time_points = generate_time_points(self.pred_start + shift, self.pred_end + shift, self.rebalance_freq)
         time_points_int = np.array([pd.Timestamp(tp).value for tp in time_points], dtype=np.int64)
         
         start_int = pd.Timestamp(self.pred_start).value

@@ -249,6 +249,51 @@ class Engine:
         
         return history
     
+    def test_loss(self, test_loader: DataLoader) -> Tuple[float, float, float]:
+        """
+        计算测试集损失
+        
+        Args:
+            test_loader: 测试数据加载器
+            
+        Returns:
+            (avg_total_loss, avg_pred_loss, avg_ae_loss)
+        """
+        self.model.eval()
+        total_loss = 0.0
+        total_pred_loss = 0.0
+        total_ae_loss = 0.0
+        n_batches = 0
+        
+        with torch.no_grad():
+            for X_batch, y_batch, _ in test_loader:
+                X_batch = {k: v.to(self.device) for k, v in X_batch.items()}
+                y_batch = y_batch.to(self.device)
+                
+                predictions, reconstructions_dict = self.model(X_batch)
+                
+                pred_loss = self.criterion(predictions, y_batch)
+                
+                ae_loss = torch.tensor(0.0, device=self.device)
+                if reconstructions_dict:
+                    for freq_name, reconstructed in reconstructions_dict.items():
+                        original = X_batch[freq_name]
+                        ae_loss += self.ae_criterion(reconstructed, original)
+                    ae_loss = ae_loss / len(reconstructions_dict)
+                
+                loss = pred_loss + self.ae_alpha * ae_loss
+                
+                total_loss += loss.item()
+                total_pred_loss += pred_loss.item()
+                total_ae_loss += ae_loss.item()
+                n_batches += 1
+                
+        avg_loss = total_loss / n_batches if n_batches > 0 else 0.0
+        avg_pred_loss = total_pred_loss / n_batches if n_batches > 0 else 0.0
+        avg_ae_loss = total_ae_loss / n_batches if n_batches > 0 else 0.0
+        
+        return avg_loss, avg_pred_loss, avg_ae_loss
+
     def predict_one_window(self, test_loader: DataLoader) -> pd.DataFrame:
         """
         推理单个窗口

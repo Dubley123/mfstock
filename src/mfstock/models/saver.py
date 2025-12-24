@@ -354,6 +354,111 @@ class ModelSaver:
         
         return merged_df
     
+    def save_training_history(self, history: Dict, window_idx: int):
+        """
+        保存训练历史（Loss）到CSV和PNG
+        
+        Args:
+            history: 包含 train_loss, val_loss 等的字典
+            window_idx: 窗口索引
+        """
+        import matplotlib.pyplot as plt
+        
+        window_dir = self.get_window_dir(window_idx)
+        log_dir = window_dir / "loss_logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        
+        # 1. 保存CSV
+        epochs = range(1, len(history['train_loss']) + 1)
+        df = pd.DataFrame({
+            'epoch': epochs,
+            'train_total_loss': history['train_loss'],
+            'train_pred_loss': history['train_pred_loss'],
+            'train_ae_loss': history['train_ae_loss'],
+            'val_total_loss': history['val_loss'],
+            'val_pred_loss': history['val_pred_loss'],
+            'val_ae_loss': history['val_ae_loss']
+        })
+        csv_path = log_dir / "loss_history.csv"
+        df.to_csv(csv_path, index=False)
+        
+        # 2. 绘制PNG
+        # PNG 1: Train losses
+        plt.figure(figsize=(10, 6))
+        plt.plot(epochs, history['train_loss'], label='Total Loss')
+        plt.plot(epochs, history['train_pred_loss'], label='Pred Loss')
+        plt.plot(epochs, history['train_ae_loss'], label='AE Loss')
+        plt.title(f'Window {window_idx+1} Training Loss')
+        plt.xlabel('Epoch')
+        plt.ylabel('Loss')
+        plt.legend()
+        plt.grid(True)
+        plt.savefig(log_dir / "train_losses.png")
+        plt.close()
+        
+        # PNG 2: Val losses
+        plt.figure(figsize=(10, 6))
+        plt.plot(epochs, history['val_loss'], label='Total Loss')
+        plt.plot(epochs, history['val_pred_loss'], label='Pred Loss')
+        plt.plot(epochs, history['val_ae_loss'], label='AE Loss')
+        plt.title(f'Window {window_idx+1} Validation Loss')
+        plt.xlabel('Epoch')
+        plt.ylabel('Loss')
+        plt.legend()
+        plt.grid(True)
+        plt.savefig(log_dir / "val_losses.png")
+        plt.close()
+        
+        # PNG 3: Train vs Val Combined Loss
+        plt.figure(figsize=(10, 6))
+        plt.plot(epochs, history['train_loss'], label='Train Total Loss')
+        plt.plot(epochs, history['val_loss'], label='Val Total Loss')
+        plt.title(f'Window {window_idx+1} Train vs Val Total Loss')
+        plt.xlabel('Epoch')
+        plt.ylabel('Loss')
+        plt.legend()
+        plt.grid(True)
+        plt.savefig(log_dir / "combined_loss_comparison.png")
+        plt.close()
+        
+        print(f"Loss logs saved to {log_dir}")
+
+    def save_test_losses(self, test_losses: list):
+        """
+        保存所有窗口的测试集Loss
+        
+        Args:
+            test_losses: 列表，每个元素为 {'window_idx': int, 'total_loss': float, 'pred_loss': float, 'ae_loss': float}
+        """
+        import matplotlib.pyplot as plt
+        
+        if self.output_dir is None:
+            return
+            
+        log_dir = self.output_dir / "test_loss_logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        
+        # 1. 保存CSV
+        df = pd.DataFrame(test_losses)
+        csv_path = log_dir / "test_loss_summary.csv"
+        df.to_csv(csv_path, index=False)
+        
+        # 2. 绘制PNG
+        windows = df['window_idx'] + 1
+        plt.figure(figsize=(10, 6))
+        plt.plot(windows, df['total_loss'], marker='o', label='Total Loss')
+        plt.plot(windows, df['pred_loss'], marker='s', label='Pred Loss')
+        plt.plot(windows, df['ae_loss'], marker='^', label='AE Loss')
+        plt.title('Test Loss across Windows')
+        plt.xlabel('Window')
+        plt.ylabel('Loss')
+        plt.xticks(windows)
+        plt.legend()
+        plt.grid(True)
+        plt.savefig(log_dir / "test_loss_summary.png")
+        plt.close()
+        
+        print(f"Test loss logs saved to {log_dir}")
     
     def get_config_id(self) -> str:
         """返回当前配置ID"""

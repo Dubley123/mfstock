@@ -165,6 +165,7 @@ def main(config_path: str = None):
     print("\n[5] Starting rolling window training...")
     
     all_predictions = []
+    all_test_losses = []
     
     for window_idx, (train_loader, val_loader, test_loader) in enumerate(rolling_window):
         # 使用 1-indexed 的窗口 ID
@@ -215,6 +216,9 @@ def main(config_path: str = None):
                         'val_ic': history['best_val_ic']
                     }
                 )
+                
+                # 保存训练历史
+                saver.save_training_history(history, window_idx)
         else:
             print(f"\n✗ No existing model found for window {display_idx}")
             
@@ -253,24 +257,48 @@ def main(config_path: str = None):
                     'val_ic': history['best_val_ic']
                 }
             )
+            
+            # 保存训练历史
+            saver.save_training_history(history, window_idx)
         
-        # 推理
-        print(f"\nPredicting on test set...")
-        predictions_df = engine.predict_one_window(test_loader)
-        predictions_df['window_idx'] = window_idx
-        
-        # 确保time列是pd.Timestamp格式（从int64转换）
-        if predictions_df['time'].dtype == 'int64':
-            predictions_df['time'] = pd.to_datetime(predictions_df['time'])
-        
-        # 实时保存窗口预测（防止中断丢失）
-        saver.save_window_predictions(predictions_df, window_idx)
-        
-        # 汇总到内存
-        all_predictions.append(predictions_df)
-        
-        print(f"\nWindow {display_idx} completed!")
-        print(f"Predictions: {len(predictions_df)} samples")
+        # 计算测试集Loss和推理
+        if len(test_loader) > 0:
+            print(f"Calculating test loss for window {display_idx}...")
+            test_total, test_pred, test_ae = engine.test_loss(test_loader)
+            all_test_losses.append({
+                'window_idx': window_idx,
+                'total_loss': test_total,
+                'pred_loss': test_pred,
+                'ae_loss': test_ae
+            })
+            
+            # 推理
+            print(f"\nPredicting on test set...")
+            predictions_df = engine.predict_one_window(test_loader)
+            
+            if not predictions_df.empty:
+                predictions_df['window_idx'] = window_idx
+                
+                # 确保time列是pd.Timestamp格式（从int64转换）
+                if 'time' in predictions_df.columns and predictions_df['time'].dtype == 'int64':
+                    predictions_df['time'] = pd.to_datetime(predictions_df['time'])
+                
+                # 实时保存窗口预测（防止中断丢失）
+                saver.save_window_predictions(predictions_df, window_idx)
+                
+                # 汇总到内存
+                all_predictions.append(predictions_df)
+                
+                print(f"\nWindow {display_idx} completed!")
+                print(f"Predictions: {len(predictions_df)} samples")
+            else:
+                print(f"\nWindow {display_idx} has no predictions (empty test set).")
+        else:
+            print(f"\nWindow {display_idx} has no test data, skipping test phase.")
+    
+    # 保存所有窗口的测试集Loss汇总
+    if all_test_losses:
+        saver.save_test_losses(all_test_losses)
     
     # ==================== 7. 汇总并保存所有预测 ====================
     print("\n[6] Aggregating and saving all predictions...")
