@@ -49,7 +49,8 @@ class back_test:
         market_index,
         suspension_limit,
         start_date='2010-01-01',
-        end_date='2025-06-30'
+        end_date='2025-06-30',
+        n_groups=10
     ):
         """初始化回测器。
 
@@ -62,6 +63,7 @@ class back_test:
             suspension_limit (pd.DataFrame): 交易限制表，包含 ['TradingDate','Stkcd','Suspension','LimitStatus']。
             start_date (str, optional): 起始日期 YYYY-MM-DD，默认值 '2010-01-01'。
             end_date (str, optional): 结束日期 YYYY-MM-DD，默认值 '2025-06-30'。
+            n_groups (int, optional): 分组数量，默认值 10。
         """
         # 转换因子列类型为 float
         factor = factor.copy()
@@ -96,6 +98,7 @@ class back_test:
         self.suspension_limit = suspension_limit  # 股票交易限制状态（1：受限，0：正常）
         self.neutralize = None                  # 因子中性化方式
         self.market_index_name = market_index   # 市场指数名称
+        self.n_groups = n_groups                # 分组数量
 
     def __str__(self):
         lines = [
@@ -225,7 +228,7 @@ class back_test:
         market_index = df.groupby('TradingDate')['ret'].mean().reset_index()
 
         # ---------------- Step 2: 初始化分组标签与净值表 ----------------
-        labels = [f'第{i}分位' for i in range(1, 11)]
+        labels = [f'第{i}分位' for i in range(1, self.n_groups + 1)]
         index_cols = labels + [self.market_index_name, 'Excess_+', 'Excess_-']
         net_value = pd.DataFrame(index=index_cols)
         group_ret = pd.DataFrame(index=index_cols)
@@ -242,12 +245,12 @@ class back_test:
             try:
                 # --- 分位切分 ---
                 today_df['quantile'] = today_df[self.fac_name].rank(method='first', pct=True)
-                today_df['quantile_group'] = pd.qcut(today_df['quantile'], q=10, labels=labels, duplicates='drop')
+                today_df['quantile_group'] = pd.qcut(today_df['quantile'], q=self.n_groups, labels=labels, duplicates='drop')
 
-                # --- 检查是否真的分成10个分位 ---
+                # --- 检查是否真的分成 n_groups 个分位 ---
                 unique_groups = today_df['quantile_group'].nunique(dropna=True)
-                if unique_groups < 10:
-                    raise ValueError(f"only {unique_groups} quantiles formed (less than 10)")
+                if unique_groups < self.n_groups:
+                    raise ValueError(f"only {unique_groups} quantiles formed (less than {self.n_groups})")
 
             except Exception as e:
                 tqdm.write(f"Error at {index}: {e}")
@@ -279,7 +282,7 @@ class back_test:
                 r_mean.loc[self.market_index_name] = 0
 
             # 计算超额收益
-            r_mean.loc['Excess_+'] = r_mean.loc['第10分位'] - r_mean.loc[self.market_index_name]
+            r_mean.loc['Excess_+'] = r_mean.loc[f'第{self.n_groups}分位'] - r_mean.loc[self.market_index_name]
             r_mean.loc['Excess_-'] = r_mean.loc['第1分位'] - r_mean.loc[self.market_index_name]
 
             r_mean = r_mean.rename(columns={'ret': index})
@@ -298,7 +301,7 @@ class back_test:
         net_value.columns = column_name
 
         net_value = net_value.T
-        if net_value['第10分位'].mean() > net_value['第1分位'].mean():
+        if net_value[f'第{self.n_groups}分位'].mean() > net_value['第1分位'].mean():
             net_value['Excess'] = net_value['Excess_+']
         else:
             net_value['Excess'] = net_value['Excess_-']
@@ -364,8 +367,8 @@ class back_test:
 
         # ---------------- Step 1: 单调性分析 ----------------
         test = pd.DataFrame({
-            '分层累计收益率': df.T.iloc[:10, -1],
-            'Group': list(range(1, 11))
+            '分层累计收益率': df.T.iloc[:self.n_groups, -1],
+            'Group': list(range(1, self.n_groups + 1))
         })
         monotonicity = test.corr().iloc[0, 1]
         print("单调性分析：", monotonicity)
@@ -421,6 +424,7 @@ def run_bt(
     end_date: str | None = None,
     frequency: str = "monthly",
     save_backtest_result: bool = False,
+    n_groups: int = 10,
 ):
     """对一个或一组因子执行完整回测流程。
 
@@ -438,6 +442,7 @@ def run_bt(
         end_date (str | None, optional): 结束日期，支持 'YYYY'/'YYYY-MM'/'YYYY-MM-DD'，如果为None则使用因子最晚日期，默认值 None。
         frequency (str, optional): 回测频率，'daily'/'weekly'/'monthly'/'yearly'，默认值 'monthly'。
         save_backtest_result (bool, optional): 是否保存净值/收益率与分析结果，默认值 False。
+        n_groups (int, optional): 分组数量，默认值 10。
 
     Raises:
         ValueError: 传入路径无效或类型非法时。
@@ -536,7 +541,7 @@ def run_bt(
         period_label = f"from_{effective_start_date}_to_{effective_end_date}"
 
         test = back_test(
-            df, close_price, factor_name, result_dir_f, "all", suspension_limit, start_date=effective_start_date, end_date=effective_end_date
+            df, close_price, factor_name, result_dir_f, "all", suspension_limit, start_date=effective_start_date, end_date=effective_end_date, n_groups=n_groups
         )
 
         test.factor_process(stock_pool=stock_pool, market_value=market_value, neutralize=neutralize)

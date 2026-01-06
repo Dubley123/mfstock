@@ -30,5 +30,8 @@ backtest_config:
   # 3. 回测频率（调仓周期）
   backtest_frequency: "monthly"
 
-  # 4. 是否将回测结果保存为文件
+  # 4. 分组数量
+  n_groups: 10
+
+  # 5. 是否将回测结果保存为文件
   save_backtest_result: true      

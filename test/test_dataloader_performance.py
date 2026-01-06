@@ -10,8 +10,8 @@ sys.path.insert(0, str(project_root))
 
 import pandas as pd
 import time
-from src.dataset import FeatureDataset, TargetDataset
-from src.dataset.dataloader import MultiFreqDataLoader, create_dataloader
+from mfstock.dataset import FeatureDataset, TargetDataset
+from mfstock.dataset.dataloader import MultiFreqDataLoader, create_dataloader
 
 
 def test_dataloader_performance():

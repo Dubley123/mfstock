@@ -94,6 +94,7 @@ def main():
     end_date = method_cfg.get("end_date", None)
     backtest_frequency = method_cfg.get("backtest_frequency") or "monthly"
     save_backtest_result = method_cfg.get("save_backtest_result", False)
+    n_groups = method_cfg.get("n_groups", 10)
 
     # ---------- 获取因子文件 ----------
     factor_files = get_factor_files(factor_path)
@@ -112,6 +113,7 @@ def main():
         end_date=end_date,
         frequency=backtest_frequency,
         save_backtest_result=save_backtest_result,
+        n_groups=n_groups,
     )
 
 
